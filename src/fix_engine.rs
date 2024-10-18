@@ -99,8 +99,8 @@ fn extract_complete_message(buffer: &[u8]) -> Option<(String, Vec<u8>)> {
         // Look for the SOH character after the checksum value
         if let Some(end_pos) = message_str[checksum_pos..].find(SOH) {
             // Extract the complete message
-            let full_message = &message_str[..checksum_pos + end_pos + 4]; // Include '10=xxx' and SOH
-            let remaining_data = buffer[(checksum_pos + end_pos + 4)..].to_vec(); // Remaining bytes
+            let full_message = &message_str[..checksum_pos + end_pos +1]; // Include '10=xxx' and SOH
+            let remaining_data = buffer[(checksum_pos + end_pos +1)..].to_vec(); // Remaining bytes
             return Some((full_message.to_string(), remaining_data));
         }
     }

@@ -1,0 +1,70 @@
+You are an expert Rust programmer and have decades of experience creating FIX engines like QuickFixJ and Fix8 for reliable, high performance financial trading applications. You also write comprehensive automated test suites for the code you write. You also write well factored code, with good separation of concerns and appropriate abstractions. I need you to create a Fix engine in Rust. The code files you create should include the following:
+
+- FIX Engine. The FIX Engine can act as both initiator and acceptor. It sends and receives FIX 4.4 formatted messages over a TCP stream. When receiving a message the FIX Engine should offload the message to another thread for processing. When sending a message the outgoing message is passed from another thread to the thread managing the TCP stream within the FIX Engine. Specific functionality related to the acceptor or the initiator should be encapsulated outside the FIX Engine in other code modules. Only functionality common to both acceptor and initiator should be within the FIX Engine. It should be possible to gracefully shut down the FIX Engine. The FIX engine should support the login sequence, and heartbeats, as per the admin message specification. The FIX Engine only needs to support single connections, ie, one initiator talks to one acceptor and vice versa.
+- FIX Engine Factory. Provides a convenience to encapsulate the creation of acceptors and initiators with a simple interface, passing in the connection address, plus any other required configuration.
+- FIX Message Encoding and Decoding. This needs to correctly encode a FixMessage to a FIX formatted string, including the trailer with terminating SOH character, all header fields, and example body fields, including a repeating group. It also needs to correctly decode a FIX message, including detecting the trailing SOH character from the stream, so messages are complete and do not contain other data from the stream.
+- FIX Session. For tracking the FIX sequence numbers.
+- Integration Test. This is a comprehensive test that starts both an initiator and an acceptor, establishes a connection, allows the initiator to logon, then send a New Order Single. The Acceptor sends an Execution Report in response (this message should be sent from the background thread).
+
+
+The decode fn is wrong in multiple ways:
+
+this line is wrong - the '\x01' character is not used as a field separator:
+
+        // Split the message into key-value pairs using '\x01' as the field separator
+        let parts: Vec<&str> = message_without_trailing_soh.split('\x01').collect();
+
+this line is also wrong for the same reason:
+
+checksum_input.push('\x01'); // Add SOH character after each field
+
+rewrite the method correctly decoding a fix message, for reference this is the corresponding encode fn:
+
+    pub fn encode(&mut self) -> String {
+        // Ensure mandatory fields are populated
+        if !self.header.contains_key("8") {
+            self.header.insert("8".to_string(), "FIX.4.4".to_string());
+        }
+        if !self.header.contains_key("52") {
+            self.header.insert("52".to_string(), self.clock.now());
+        }
+
+        // Concatenate header fields
+        let mut fix_header = String::new();
+        for (tag, value) in &self.header {
+            write!(fix_header, "{}={}", tag, value).unwrap();  // No SOH between fields
+        }
+
+        // Concatenate body fields
+        let mut fix_body = String::new();
+        for (tag, value) in &self.body {
+            write!(fix_body, "{}={}", tag, value).unwrap();  // No SOH between fields
+        }
+
+        // Combine header and body
+        let message_without_checksum = format!("{}{}", fix_header, fix_body);
+
+        // Calculate checksum (sum of all bytes mod 256)
+        let checksum = calculate_checksum(&message_without_checksum);
+        self.trailer.insert("10".to_string(), checksum);
+
+        // Concatenate trailer (which contains the checksum)
+        let mut fix_trailer = String::new();
+        for (tag, value) in &self.trailer {
+            write!(fix_trailer, "{}={}", tag, value).unwrap();  // No SOH between fields
+        }
+
+        // Final message with SOH at the end
+        format!("{}{}{}", fix_header, fix_body, fix_trailer) + "\x01"
+    }
+
+    // Helper function to calculate checksum
+    fn calculate_checksum(fix_str: &str) -> String {
+        let sum: u32 = fix_str.as_bytes().iter().map(|&b| b as u32).sum();
+        format!("{:03}", sum % 256)  // Return checksum as 3-digit string
+    }
+
+
+    "8=FIX.4.49=7735=A49=SENDER56=TARGET34=152=20231016-12:30:00.123108=3098=010=119"
+
+    67

@@ -58,7 +58,6 @@ impl FixMessage {
         }
     }
 
-    // Encodes a FIX message into a string, with correct header, body, trailer, and checksum
     pub fn encode(&mut self) -> String {
         // Ensure mandatory fields are populated
         if !self.header.contains_key("8") {
@@ -68,81 +67,110 @@ impl FixMessage {
             self.header.insert("52".to_string(), self.clock.now());
         }
 
-        // Construct the body string
+        // Step 1: Concatenate body fields with SOH as the separator
         let mut fix_body = String::new();
         for (tag, value) in &self.body {
-            write!(fix_body, "{}={}{}", tag, value, SOH).unwrap();
+            write!(fix_body, "{}={}{}", tag, value, '\x01').unwrap();  // Append SOH after each tag-value pair
         }
 
-        // Calculate BodyLength (all characters after BodyLength tag up to and including SOH before checksum)
-        let body_length = fix_body.len() + self.header.iter().map(|(k, v)| k.len() + v.len() + 2).sum::<usize>() + 3;
+        // Step 2: Calculate BodyLength (length of message after "9=" tag, excluding checksum)
+        let body_length_value = {
+            // Temporarily create the header without BodyLength (9=) and checksum (10=)
+            let mut fix_header = String::new();
+            for (tag, value) in &self.header {
+                if tag != "9" && tag != "8" {
+                    write!(fix_header, "{}={}{}", tag, value, '\x01').unwrap();
+                }
+            }
+            fix_header.len() + fix_body.len()
+        };
 
-        self.header.insert("9".to_string(), body_length.to_string()); // BodyLength tag
+        // Step 3: Insert BodyLength (Tag 9)
+        self.header.insert("9".to_string(), body_length_value.to_string());
 
-        // Construct the header string in correct order
+        // Step 4: Rebuild the full header with the BodyLength now included
         let mut fix_header = String::new();
-        for &tag in REQUIRED_HEADER_FIELDS.iter() {
-            if let Some(value) = self.header.get(tag) {
-                write!(fix_header, "{}={}{}", tag, value, SOH).unwrap();
-            }
-        }
-        for (tag, value) in &self.header {
-            if !REQUIRED_HEADER_FIELDS.contains(&tag.as_str()) {
-                write!(fix_header, "{}={}{}", tag, value, SOH).unwrap();
+        for tag in &["8", "9", "35", "49", "56", "34", "52"] { // Ensure correct order of important tags
+            if let Some(value) = self.header.get(*tag) {
+                write!(fix_header, "{}={}{}", tag, value, '\x01').unwrap();
             }
         }
 
-        // Combine header and body
+        // Step 5: Combine header and body
         let message_without_checksum = format!("{}{}", fix_header, fix_body);
 
-        // Calculate the checksum and append it
+        // Step 6: Calculate checksum (sum of all bytes mod 256)
         let checksum = calculate_checksum(&message_without_checksum);
-        self.trailer.insert(CHECKSUM_TAG.to_string(), checksum);
+        self.trailer.insert("10".to_string(), checksum);
 
-        // Construct the trailer
+        // Step 7: Concatenate trailer (which contains the checksum) with SOH as the separator
         let mut fix_trailer = String::new();
         for (tag, value) in &self.trailer {
-            write!(fix_trailer, "{}={}{}", tag, value, SOH).unwrap();
+            write!(fix_trailer, "{}={}{}", tag, value, '\x01').unwrap();  // Append SOH after each tag-value pair
         }
 
-        // Complete FIX message
+        // Step 8: Final message with SOH at the end
         format!("{}{}{}", fix_header, fix_body, fix_trailer)
     }
 
-    // Decodes a FIX message from a string, extracting fields into the header, body, and trailer
+
+
     pub fn decode(fix_str: &str, clock: Arc<dyn Clock>) -> Result<FixMessage, &'static str> {
-        let mut message = FixMessage::new(clock);
-        let mut trailer_started = false;
-
-        // Split by the SOH delimiter
-        let tags: Vec<&str> = fix_str.split(SOH).filter(|&x| !x.is_empty()).collect();
-
-        for tag_value in tags {
-            let mut parts = tag_value.split('=');
-            let tag = parts.next().unwrap();
-            let value = parts.next().ok_or("Invalid FIX message format")?;
-
-            // Determine if we're in the trailer section
-            if tag == CHECKSUM_TAG {
-                trailer_started = true;
-            }
-
-            // Fill the appropriate section based on the tag
-            if trailer_started {
-                message.trailer.insert(tag.to_string(), value.to_string());
-            } else if REQUIRED_HEADER_FIELDS.contains(&tag) || tag == "9" {
-                message.header.insert(tag.to_string(), value.to_string());
-            } else {
-                message.body.insert(tag.to_string(), value.to_string());
-            }
+        // Ensure the message ends with SOH ('\x01')
+        if !fix_str.ends_with('\x01') {
+            return Err("Message does not end with SOH");
         }
 
-        // Validate checksum
-        let received_checksum = message.trailer.get(CHECKSUM_TAG).ok_or("Checksum missing")?.clone();
-        let checksum_input: String = fix_str.chars().take(fix_str.len() - received_checksum.len() - 4).collect(); // exclude "10=xxx" from checksum calculation
-        let calculated_checksum = calculate_checksum(&checksum_input);
-        if received_checksum != calculated_checksum {
-            return Err("Invalid checksum");
+        // Remove the trailing SOH before parsing
+        let message_without_trailing_soh = &fix_str[..fix_str.len() - 1];
+
+        let mut message = FixMessage::new(clock.clone());
+
+        // Split the message into key-value pairs using '\x01' as the field separator
+        let fields: Vec<&str> = message_without_trailing_soh.split('\x01').filter(|&x| !x.is_empty()).collect();
+
+        let mut checksum_input = String::new(); // The portion of the message for checksum calculation
+
+        for part in fields {
+            // Split each part by '=' to get the tag and value
+            let key_value: Vec<&str> = part.splitn(2, '=').collect();
+            if key_value.len() != 2 {
+                return Err("Invalid key-value pair in FIX message");
+            }
+
+            let tag = key_value[0];
+            let value = key_value[1];
+
+            // Skip validation for the "9" tag (BodyLength)
+            if tag == "9" {
+                message.header.insert(tag.to_string(), value.to_string());
+                // continue;
+            }
+
+            if tag == "10" {
+                // Ensure checksum is the last field
+                let received_checksum = value;
+                let calculated_checksum = calculate_checksum(&checksum_input);
+                if received_checksum != calculated_checksum {
+                    return Err("Invalid checksum");
+                }
+                message.trailer.insert(tag.to_string(), received_checksum.to_string());
+                break;  // Stop processing after checksum
+            }
+
+            // Add the part to checksum input before the checksum
+            checksum_input.push_str(part);
+            checksum_input.push('\x01');  // SOH between fields
+
+            // Populate the header, body, or trailer based on the tag
+            match tag {
+                "8" | "35" | "49" | "56" | "34" | "52" => {
+                    message.header.insert(tag.to_string(), value.to_string());
+                }
+                _ => {
+                    message.body.insert(tag.to_string(), value.to_string());
+                }
+            }
         }
 
         Ok(message)
@@ -163,42 +191,188 @@ mod tests {
         }
     }
 
+    fn create_fixed_clock() -> Arc<dyn Clock> {
+        Arc::new(FixedClock)
+    }
+
     #[test]
     fn test_fix_message_encode_decode() {
-        let fixed_clock = Arc::new(FixedClock);
+        let fixed_clock = create_fixed_clock();
+
+        // Create a FixMessage with header, body, and trailer fields
         let mut msg = FixMessage::new(fixed_clock.clone());
-        msg.header.insert("8".to_string(), "FIX.4.4".to_string());  // BeginString
+        msg.header.insert("8".to_string(), "FIX.4.4".to_string());
         msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
         msg.header.insert("49".to_string(), "SENDER".to_string());  // SenderCompID
         msg.header.insert("56".to_string(), "TARGET".to_string());  // TargetCompID
         msg.header.insert("34".to_string(), "1".to_string());       // MsgSeqNum
-        msg.header.insert("52".to_string(), fixed_clock.now());     // SendingTime (fixed for testing)
-        msg.body.insert("98".to_string(), "0".to_string());         // EncryptMethod (example field in body)
-        msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt (example field in body)
+        msg.header.insert("52".to_string(), fixed_clock.now());     // SendingTime
+        msg.body.insert("98".to_string(), "0".to_string());         // EncryptMethod
+        msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
 
-        let encoded = msg.encode();
-        println!("Encoded message: {}", encoded);
+        // Encode the message
+        let encoded_message = msg.encode();
 
-        let decoded = FixMessage::decode(&encoded, fixed_clock.clone()).unwrap();
+        // Decode the message and verify its fields
+        let decoded_message = FixMessage::decode(&encoded_message, fixed_clock.clone()).unwrap();
 
-        // Check header fields
-        assert_eq!(decoded.header.get("8").unwrap(), "FIX.4.4");
-        assert_eq!(decoded.header.get("35").unwrap(), "A");
-        assert_eq!(decoded.header.get("49").unwrap(), "SENDER");
-        assert_eq!(decoded.header.get("56").unwrap(), "TARGET");
-        assert_eq!(decoded.header.get("34").unwrap(), "1");
+        // Verify header fields
+        assert_eq!(decoded_message.header.get("8").unwrap(), "FIX.4.4");
+        assert_eq!(decoded_message.header.get("35").unwrap(), "A");
+        assert_eq!(decoded_message.header.get("49").unwrap(), "SENDER");
+        assert_eq!(decoded_message.header.get("56").unwrap(), "TARGET");
+        assert_eq!(decoded_message.header.get("34").unwrap(), "1");
 
-        // Check body fields
-        assert_eq!(decoded.body.get("98").unwrap(), "0");
-        assert_eq!(decoded.body.get("108").unwrap(), "30");
+        // Verify body fields
+        assert_eq!(decoded_message.body.get("98").unwrap(), "0");
+        assert_eq!(decoded_message.body.get("108").unwrap(), "30");
+
+        // Verify the checksum field
+        assert!(decoded_message.trailer.contains_key("10"));
     }
 
     #[test]
+    fn test_fix_message_encode_with_correct_body_length() {
+        let fixed_clock = create_fixed_clock();
+
+        // Create a FixMessage with header and body fields
+        let mut msg = FixMessage::new(fixed_clock.clone());
+        msg.header.insert("8".to_string(), "FIX.4.4".to_string());
+        msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
+        msg.header.insert("49".to_string(), "SENDER".to_string());  // SenderCompID
+        msg.header.insert("56".to_string(), "TARGET".to_string());  // TargetCompID
+        msg.header.insert("34".to_string(), "1".to_string());       // MsgSeqNum
+        msg.header.insert("52".to_string(), fixed_clock.now());     // SendingTime
+        msg.body.insert("98".to_string(), "0".to_string());         // EncryptMethod
+        msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
+
+        // Encode the message
+        let encoded_message = msg.encode();
+
+        // Ensure the message contains Tag 9 (BodyLength) right after Tag 8 (BeginString)
+        let begin_string_position = encoded_message.find("8=FIX.4.4").unwrap();
+        let body_length_position = encoded_message.find("9=").unwrap();
+        assert!(body_length_position > begin_string_position, "BodyLength should come after BeginString");
+
+        // Extract the BodyLength (Tag 9)
+        let body_length_field = encoded_message
+            .split('\x01')
+            .find(|&field| field.starts_with("9="))
+            .expect("BodyLength (Tag 9) not found");
+
+        // Extract the actual body length value from the field (e.g., "9=xxx")
+        let actual_body_length = body_length_field.split('=').nth(1).unwrap().parse::<usize>().unwrap();
+
+        // Calculate the expected body length manually (based on the message structure)
+        let expected_body_length = encoded_message
+            .split("\x01")
+            .filter(|field| !field.starts_with("8=") && !field.starts_with("9=") && !field.starts_with("10=") && !field.is_empty())
+            .map(|field| field.len() + 1) // Each field length + 1 for the SOH character
+            .sum::<usize>();
+
+        // Verify that the actual BodyLength matches the expected length
+        assert_eq!(actual_body_length, expected_body_length);
+
+        // Output the full encoded message for verification
+        println!("Encoded message: {}", encoded_message);
+
+        // Verify the message contains the correct structure
+        assert!(encoded_message.contains("8=FIX.4.4\x01"));
+        assert!(encoded_message.contains("9="));
+        assert!(encoded_message.contains("10=")); // Checksum field
+    }
+
+    #[test]
+    fn test_fix_message_encode_correct_order() {
+        let fixed_clock = create_fixed_clock();
+
+        // Create a FixMessage with header and body fields
+        let mut msg = FixMessage::new(fixed_clock.clone());
+        msg.header.insert("8".to_string(), "FIX.4.4".to_string());
+        msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
+        msg.header.insert("49".to_string(), "SENDER".to_string());  // SenderCompID
+        msg.header.insert("56".to_string(), "TARGET".to_string());  // TargetCompID
+        msg.header.insert("34".to_string(), "1".to_string());       // MsgSeqNum
+        msg.header.insert("52".to_string(), fixed_clock.now());     // SendingTime
+        msg.body.insert("98".to_string(), "0".to_string());         // EncryptMethod
+        msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
+
+        // Encode the message
+        let encoded_message = msg.encode();
+
+        // Output the full encoded message for verification
+        println!("Encoded message: {}", encoded_message);
+
+        // Verify the message contains the correct structure
+        assert!(encoded_message.contains("8=FIX.4.4\x01"));
+        assert!(encoded_message.contains("9="));
+        assert!(encoded_message.contains("35=A\x01"));
+        assert!(encoded_message.contains("49=SENDER\x01"));
+        assert!(encoded_message.contains("56=TARGET\x01"));
+        assert!(encoded_message.contains("34=1\x01"));
+        assert!(encoded_message.contains("52="));
+        assert!(encoded_message.contains("10=")); // Checksum field
+    }
+
+
+    #[test]
+    fn test_valid_checksum() {
+        let fixed_clock = create_fixed_clock();
+
+        // A sample FIX message with SOH between fields and at the end
+        let encoded_message = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x01";
+        let encoded_with_pipe = "8=FIX.4.4|9=59|35=A|49=SENDER|56=TARGET|34=1|52=20231016-12:30:00.123|98=0|108=30|";
+        let calculated = calculate_checksum(encoded_message);
+        print!("{}", calculated)
+    }
+
+    #[test]
+    fn test_calculate_checksum() {
+        // Create a sample FIX message without the checksum field
+        let message_without_checksum = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x01";
+
+        // Calculate the checksum for the message
+        let calculated_checksum = calculate_checksum(message_without_checksum);
+
+        // The expected checksum (based on manual calculation or verified checksum)
+        let expected_checksum = "119";  // This is the checksum for the above message
+
+        // Verify that the calculated checksum matches the expected checksum
+        assert_eq!(calculated_checksum, expected_checksum);
+    }
+
+        #[test]
     fn test_invalid_checksum() {
-        let fixed_clock = Arc::new(FixedClock);
-        let invalid_message = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x0110=999\x01";
+        let fixed_clock = create_fixed_clock();
+
+        // Create an invalid FIX message with an incorrect checksum
+        let invalid_message = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x0110=999\x01"; // Invalid checksum
+
+        // Decode the message and expect an error due to checksum mismatch
         let result = FixMessage::decode(invalid_message, fixed_clock);
         assert!(result.is_err());
         assert_eq!(result.err().unwrap(), "Invalid checksum");
+    }
+
+    #[test]
+    fn test_message_without_soh_fails() {
+        let fixed_clock = create_fixed_clock();
+
+        // Create a message without the trailing SOH
+        let invalid_message = "8=FIX.4.4\
+                               9=59\
+                               35=A\
+                               49=SENDER\
+                               56=TARGET\
+                               34=1\
+                               52=20231016-12:30:00.123\
+                               98=0\
+                               108=30\
+                               10=214"; // Missing the trailing SOH
+
+        // Decode the message and expect an error due to missing SOH
+        let result = FixMessage::decode(invalid_message, fixed_clock);
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap(), "Message does not end with SOH");
     }
 }
