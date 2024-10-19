@@ -1,11 +1,12 @@
-use crate::fix_message::{Clock, FixMessage, SOH};
+use crate::fix_message::{Clock, FixMessage};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tracing::info;
+use tracing::*;
+use crate::fix_protocol::SOH;
 
 pub struct FixEngine {
     engine_mode: &'static str,
@@ -40,8 +41,10 @@ impl FixEngine {
             info!("{0}: Running receive thread.", mode);
             let mut buffer = vec![];
             let mut stream_reader = stream_clone;
+            stream_reader.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
 
             while *is_running_rx.lock().unwrap() {
+                info!("{0}: Inside receive thread.", mode);
                 let mut tmp_buf = [0; 512]; // Temporary buffer for incoming chunks
                 match stream_reader.read(&mut tmp_buf) {
                     Ok(size) => {
@@ -58,9 +61,18 @@ impl FixEngine {
                             }
                         }
                     },
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {
+                        info!("{0}: Checking is_running: {1}.", mode, *is_running_rx.lock().unwrap());
+                        // Check if it's time to exit
+                        if !*is_running_rx.lock().unwrap() {
+                            info!("{0}: Time to exit receive.", mode);
+                            break;
+                        }
+                    }
                     Err(_) => break,
                 }
             }
+            info!("{0}: Exiting receive thread.", mode);
         }));
 
         // Sender thread (writes to TCP stream)
@@ -68,25 +80,46 @@ impl FixEngine {
         self.tx_thread = Some(thread::spawn(move || {
             info!("{0}: Running send thread.", mode);
             while *is_running_tx.lock().unwrap() {
+                info!("{0}: Inside send thread.", mode);
                 if let Ok(mut message) = outgoing_rx.recv_timeout(Duration::from_secs(1)) {
                     info!("{0}: Sending message {message:?}.", mode);
                     let message_str = message.encode();
                     stream.write_all(message_str.as_bytes()).unwrap();
                 }
+                info!("{0}: Checking is_running: {1}.", mode, *is_running_tx.lock().unwrap());
+                // Allow the loop to exit if is_running is set to false
+                if !*is_running_tx.lock().unwrap() {
+                    info!("{0}: Time to exit send.", mode);
+                    break;
+                }
             }
+            info!("{0}: Exiting send thread.", mode);
         }));
     }
 
     pub fn shutdown(&mut self) {
-        let mut is_running = self.is_running.lock().unwrap();
-        *is_running = false;
+        info!("{0}: Shutting down.", self.engine_mode);
 
+        // Signal to stop the threads
+        {
+            let mut is_running = self.is_running.lock().unwrap();
+            *is_running = false;
+        }
+
+        // If the sender/receiver threads are using the stream, flush and close the stream
         if let Some(tx_thread) = self.tx_thread.take() {
-            tx_thread.join().unwrap();
+            if let Err(e) = tx_thread.join() {
+                error!("Error joining tx_thread: {:?}", e);
+            }
         }
+
         if let Some(rx_thread) = self.rx_thread.take() {
-            rx_thread.join().unwrap();
+            if let Err(e) = rx_thread.join() {
+                error!("Error joining rx_thread: {:?}", e);
+            }
         }
+
+        info!("{0}: Fully shut down.", self.engine_mode);
     }
 }
 

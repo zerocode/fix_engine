@@ -3,10 +3,6 @@ use std::fmt;
 use std::fmt::{Debug, Formatter, Write};
 use std::sync::Arc;
 
-pub const SOH: char = '\x01';
-const CHECKSUM_TAG: &str = "10";
-const REQUIRED_HEADER_FIELDS: [&str; 7] = ["8", "9", "35", "49", "56", "34", "52"];
-
 // Trait defining a Clock that provides the current time as a UTC string.
 
 pub trait Clock: Send + Sync {
@@ -41,11 +37,17 @@ pub struct FixMessage {
 impl Debug for FixMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("FixMessage")
-            .field("header", &self.header)
+            .field("header", &sorted_map(&self.header))
             .field("body", &self.body)
             .field("trailer", &self.trailer)
             .finish() // Exclude the `clock` field
     }
+}
+
+fn sorted_map(map: &HashMap<String, String>) -> Vec<(&String, &String)> {
+    let mut sorted_entries: Vec<_> = map.iter().collect();
+    sorted_entries.sort_by_key(|(k, _)| k.parse::<i32>().unwrap());
+    sorted_entries
 }
 
 impl FixMessage {
