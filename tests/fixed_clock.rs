@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use fix_engine_2::message::Clock;
+use fix_engine_2::clock::Clock;
 
 // A FixedClock for testing purposes
 pub struct FixedClock;

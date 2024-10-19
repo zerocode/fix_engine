@@ -3,7 +3,8 @@
 pub mod engine;
 pub mod message;
 pub mod engine_factory;
-mod protocol;
+mod tag;
+pub mod clock;
 
 // Re-export commonly used items for convenience
 pub use crate::engine::FixEngine;

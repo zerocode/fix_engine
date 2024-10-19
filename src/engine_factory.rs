@@ -1,13 +1,11 @@
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc, mpsc::{channel, Sender, Receiver}};
-use crate::engine::FixEngine;
-use crate::message::{FixMessage, RealClock, Clock};
+use std::sync::{mpsc::{channel, Receiver, Sender}, Arc};
+use crate::engine::{FixEngine, FixEngineMode};
+use crate::message::FixMessage;
 use tracing::{error, info};
+use crate::clock::{Clock, RealClock};
 
 pub struct FixEngineFactory;
-
-const INITIATOR: &'static str = "Initiator";
-const ACCEPTOR: &'static str = "Acceptor";
 
 impl FixEngineFactory {
     pub fn create_initiator(address: &str) -> (FixEngine, Sender<FixMessage>, Receiver<FixMessage>) {
@@ -26,7 +24,7 @@ impl FixEngineFactory {
         let (incoming_tx, incoming_rx) = channel();
 
         let clock: Arc<dyn Clock> = Arc::new(RealClock); // Provide the clock
-        let mut engine = FixEngine::new(clock, INITIATOR); // Pass the clock into FixEngine
+        let mut engine = FixEngine::new(clock, &FixEngineMode::Initiator); // Pass the clock into FixEngine
         engine.start(stream, rx, incoming_tx);
         (engine, tx, incoming_rx)
     }
@@ -48,7 +46,7 @@ impl FixEngineFactory {
         let stream = listener.accept().unwrap().0;
 
         let clock: Arc<dyn Clock> = Arc::new(RealClock); // Provide the clock
-        let mut engine = FixEngine::new(clock, ACCEPTOR); // Pass the clock into FixEngine
+        let mut engine = FixEngine::new(clock, &FixEngineMode::Acceptor); // Pass the clock into FixEngine
         engine.start(stream, rx, incoming_tx);
         (engine, tx, incoming_rx)
     }
