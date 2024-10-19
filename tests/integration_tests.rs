@@ -41,7 +41,7 @@ fn test_initiator_acceptor_can_exchange_messages() {
 
 fn create_logon_message() -> FixMessage {
     let fixed_clock = create_fixed_clock();
-    let mut msg = FixMessage::new(fixed_clock.clone());
+    let mut msg = FixMessage::new();
     msg.header.insert("8".to_string(), "FIX.4.4".to_string());  // BeginString
     msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
     msg.header.insert("49".to_string(), "INITIATOR".to_string());  // SenderCompID
@@ -53,7 +53,7 @@ fn create_logon_message() -> FixMessage {
 
 fn create_execution_report() -> FixMessage {
     let fixed_clock = create_fixed_clock();
-    let mut msg = FixMessage::new(fixed_clock.clone());
+    let mut msg = FixMessage::new();
     msg.header.insert("8".to_string(), "FIX.4.4".to_string());
     msg.header.insert("35".to_string(), "8".to_string());  // Execution Report message type
     msg.header.insert("49".to_string(), "ACCEPTOR".to_string());  // SenderCompID

@@ -49,7 +49,7 @@ impl FixEngine {
                             buffer.extend_from_slice(&tmp_buf[..size]); // Append the chunk to the buffer
 
                             if let Some((message_str, remaining)) = extract_message(&buffer) {
-                                if let Ok(fix_message) = FixMessage::decode(&message_str, Arc::clone(&clock)) {
+                                if let Ok(fix_message) = FixMessage::decode(&message_str) {
                                     info!("{0}: Received message {fix_message:?}.", mode);
                                     incoming_tx.send(fix_message).unwrap();
                                 }
@@ -75,7 +75,7 @@ impl FixEngine {
             while *is_running_tx.lock().unwrap() {
                 if let Ok(mut message) = outgoing_rx.recv_timeout(Duration::from_secs(1)) {
                     info!("{0}: Sending message {message:?}.", mode);
-                    let message_str = message.encode();
+                    let message_str = message.encode(&clock);
                     stream.write_all(message_str.as_bytes()).unwrap();
                 }
                 if !*is_running_tx.lock().unwrap() {

@@ -3,13 +3,10 @@ use std::fmt;
 use std::fmt::{Debug, Formatter, Write};
 use std::sync::Arc;
 
-// Trait defining a Clock that provides the current time as a UTC string.
-
 pub trait Clock: Send + Sync {
     fn now(&self) -> String;
 }
 
-// RealClock provides the actual system time.
 #[derive(Debug)]
 pub struct RealClock;
 
@@ -31,7 +28,6 @@ pub struct FixMessage {
     pub header: HashMap<String, String>,
     pub body: HashMap<String, String>,
     pub trailer: HashMap<String, String>,
-    clock: Arc<dyn Clock>, // Use Arc to make it shareable across threads
 }
 
 impl Debug for FixMessage {
@@ -51,22 +47,21 @@ fn sorted_map(map: &HashMap<String, String>) -> Vec<(&String, &String)> {
 }
 
 impl FixMessage {
-    pub fn new(clock: Arc<dyn Clock>) -> FixMessage {
+    pub fn new() -> FixMessage {
         FixMessage {
             header: HashMap::new(),
             body: HashMap::new(),
             trailer: HashMap::new(),
-            clock,
         }
     }
 
-    pub fn encode(&mut self) -> String {
+    pub fn encode(&mut self, clock: &Arc<dyn Clock>) -> String {
         // Ensure mandatory fields are populated
         if !self.header.contains_key("8") {
             self.header.insert("8".to_string(), "FIX.4.4".to_string());
         }
         if !self.header.contains_key("52") {
-            self.header.insert("52".to_string(), self.clock.now());
+            self.header.insert("52".to_string(), clock.now());
         }
 
         // Step 1: Concatenate body fields with SOH as the separator
@@ -115,7 +110,7 @@ impl FixMessage {
         format!("{}{}{}", fix_header, fix_body, fix_trailer)
     }
 
-    pub fn decode(fix_str: &str, clock: Arc<dyn Clock>) -> Result<FixMessage, &'static str> {
+    pub fn decode(fix_str: &str) -> Result<FixMessage, &'static str> {
         // Ensure the message ends with SOH ('\x01')
         if !fix_str.ends_with('\x01') {
             return Err("Message does not end with SOH");
@@ -124,7 +119,7 @@ impl FixMessage {
         // Remove the trailing SOH before parsing
         let message_without_trailing_soh = &fix_str[..fix_str.len() - 1];
 
-        let mut message = FixMessage::new(clock.clone());
+        let mut message = FixMessage::new();
 
         // Split the message into key-value pairs using '\x01' as the field separator
         let fields: Vec<&str> = message_without_trailing_soh.split('\x01').filter(|&x| !x.is_empty()).collect();
@@ -200,7 +195,7 @@ mod tests {
         let fixed_clock = create_fixed_clock();
 
         // Create a FixMessage with header, body, and trailer fields
-        let mut msg = FixMessage::new(fixed_clock.clone());
+        let mut msg = FixMessage::new();
         msg.header.insert("8".to_string(), "FIX.4.4".to_string());
         msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
         msg.header.insert("49".to_string(), "SENDER".to_string());  // SenderCompID
@@ -211,10 +206,10 @@ mod tests {
         msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
 
         // Encode the message
-        let encoded_message = msg.encode();
+        let encoded_message = msg.encode(&fixed_clock);
 
         // Decode the message and verify its fields
-        let decoded_message = FixMessage::decode(&encoded_message, fixed_clock.clone()).unwrap();
+        let decoded_message = FixMessage::decode(&encoded_message).unwrap();
 
         // Verify header fields
         assert_eq!(decoded_message.header.get("8").unwrap(), "FIX.4.4");
@@ -236,7 +231,7 @@ mod tests {
         let fixed_clock = create_fixed_clock();
 
         // Create a FixMessage with header and body fields
-        let mut msg = FixMessage::new(fixed_clock.clone());
+        let mut msg = FixMessage::new();
         msg.header.insert("8".to_string(), "FIX.4.4".to_string());
         msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
         msg.header.insert("49".to_string(), "SENDER".to_string());  // SenderCompID
@@ -247,7 +242,7 @@ mod tests {
         msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
 
         // Encode the message
-        let encoded_message = msg.encode();
+        let encoded_message = msg.encode(&fixed_clock);
 
         // Ensure the message contains Tag 9 (BodyLength) right after Tag 8 (BeginString)
         let begin_string_position = encoded_message.find("8=FIX.4.4").unwrap();
@@ -287,7 +282,7 @@ mod tests {
         let fixed_clock = create_fixed_clock();
 
         // Create a FixMessage with header and body fields
-        let mut msg = FixMessage::new(fixed_clock.clone());
+        let mut msg = FixMessage::new();
         msg.header.insert("8".to_string(), "FIX.4.4".to_string());
         msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
         msg.header.insert("49".to_string(), "SENDER".to_string());  // SenderCompID
@@ -298,7 +293,7 @@ mod tests {
         msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
 
         // Encode the message
-        let encoded_message = msg.encode();
+        let encoded_message = msg.encode(&fixed_clock);
 
         // Output the full encoded message for verification
         println!("Encoded message: {}", encoded_message);
@@ -317,11 +312,9 @@ mod tests {
 
     #[test]
     fn test_valid_checksum() {
-        let fixed_clock = create_fixed_clock();
+        // let fixed_clock = create_fixed_clock();
 
-        // A sample FIX message with SOH between fields and at the end
         let encoded_message = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x01";
-        let encoded_with_pipe = "8=FIX.4.4|9=59|35=A|49=SENDER|56=TARGET|34=1|52=20231016-12:30:00.123|98=0|108=30|";
         let calculated = calculate_checksum(encoded_message);
         print!("{}", calculated)
     }
@@ -343,22 +336,18 @@ mod tests {
 
         #[test]
     fn test_invalid_checksum() {
-        let fixed_clock = create_fixed_clock();
 
         // Create an invalid FIX message with an incorrect checksum
         let invalid_message = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x0110=999\x01"; // Invalid checksum
 
         // Decode the message and expect an error due to checksum mismatch
-        let result = FixMessage::decode(invalid_message, fixed_clock);
+        let result = FixMessage::decode(invalid_message);
         assert!(result.is_err());
         assert_eq!(result.err().unwrap(), "Invalid checksum");
     }
 
     #[test]
     fn test_message_without_soh_fails() {
-        let fixed_clock = create_fixed_clock();
-
-        // Create a message without the trailing SOH
         let invalid_message = "8=FIX.4.4\
                                9=59\
                                35=A\
@@ -370,8 +359,7 @@ mod tests {
                                108=30\
                                10=214"; // Missing the trailing SOH
 
-        // Decode the message and expect an error due to missing SOH
-        let result = FixMessage::decode(invalid_message, fixed_clock);
+        let result = FixMessage::decode(invalid_message);
         assert!(result.is_err());
         assert_eq!(result.err().unwrap(), "Message does not end with SOH");
     }
