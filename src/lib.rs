@@ -1,10 +1,11 @@
 // Publicly expose all the modules of the library
 
-pub mod fix_engine;
-pub mod fix_message;
-pub mod fix_engine_factory;
+pub mod engine;
+pub mod message;
+pub mod engine_factory;
+mod protocol;
 
 // Re-export commonly used items for convenience
-pub use crate::fix_engine::FixEngine;
-pub use crate::fix_message::FixMessage;
-pub use crate::fix_engine_factory::FixEngineFactory;
+pub use crate::engine::FixEngine;
+pub use crate::message::FixMessage;
+pub use crate::engine_factory::FixEngineFactory;

@@ -1,18 +1,17 @@
 mod fixed_clock;
 
-use std::sync::mpsc::Sender;
-use fix_engine_2::fix_engine_factory::FixEngineFactory;
-use fix_engine_2::fix_message::{FixMessage};
+use crate::fixed_clock::create_fixed_clock;
+use fix_engine_2::engine_factory::FixEngineFactory;
+use fix_engine_2::message::FixMessage;
 use std::thread;
 use std::time::Duration;
-use crate::fixed_clock::create_fixed_clock;
 
 #[test]
-fn test_fix_initiator_acceptor() {
+fn test_initiator_acceptor_can_exchange_messages() {
     let address = "127.0.0.1:12345";
 
     // Start the acceptor in a separate thread
-    let acceptor_thread = thread::spawn(move || {
+    thread::spawn(move || {
         let (mut engine, sender, receiver) = FixEngineFactory::create_acceptor(address);
 
         // Receive the message (from initiator)
@@ -25,12 +24,10 @@ fn test_fix_initiator_acceptor() {
     });
 
     // Give the acceptor time to start listening
-    thread::sleep(Duration::from_millis(1000));
+    thread::sleep(Duration::from_millis(100));
 
     // Start the initiator
     let (mut engine, sender, receiver) = FixEngineFactory::create_initiator(address);
-
-    thread::sleep(Duration::from_millis(1000));
 
     // Create a logon message using the fixed clock
     sender.send(create_logon_message()).unwrap(); // Send logon
@@ -40,24 +37,22 @@ fn test_fix_initiator_acceptor() {
     assert_eq!(response.header.get("35").unwrap(), "8"); // Execution Report message type
 
     engine.shutdown();
-    acceptor_thread.join().unwrap();
 }
 
 fn create_logon_message() -> FixMessage {
     let fixed_clock = create_fixed_clock();
-    let mut msg = FixMessage::new(fixed_clock.clone()); // Use FixedClock
+    let mut msg = FixMessage::new(fixed_clock.clone());
     msg.header.insert("8".to_string(), "FIX.4.4".to_string());  // BeginString
     msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
     msg.header.insert("49".to_string(), "INITIATOR".to_string());  // SenderCompID
     msg.header.insert("56".to_string(), "ACCEPTOR".to_string());  // TargetCompID
     msg.header.insert("34".to_string(), "1".to_string());       // MsgSeqNum
-    msg.header.insert("52".to_string(), fixed_clock.now());     // SendingTime (fixed for testing)
+    msg.header.insert("52".to_string(), fixed_clock.now());     // SendingTime
     msg
 }
 
-// Helper function to create a sample execution report
 fn create_execution_report() -> FixMessage {
-    let fixed_clock = create_fixed_clock(); // Use FixedClock for consistency
+    let fixed_clock = create_fixed_clock();
     let mut msg = FixMessage::new(fixed_clock.clone());
     msg.header.insert("8".to_string(), "FIX.4.4".to_string());
     msg.header.insert("35".to_string(), "8".to_string());  // Execution Report message type
@@ -70,6 +65,5 @@ fn create_execution_report() -> FixMessage {
 
 #[ctor::ctor]
 fn setup() {
-    // Initialize tracing subscriber for tests
     tracing_subscriber::fmt::init();
 }

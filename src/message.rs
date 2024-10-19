@@ -115,8 +115,6 @@ impl FixMessage {
         format!("{}{}{}", fix_header, fix_body, fix_trailer)
     }
 
-
-
     pub fn decode(fix_str: &str, clock: Arc<dyn Clock>) -> Result<FixMessage, &'static str> {
         // Ensure the message ends with SOH ('\x01')
         if !fix_str.ends_with('\x01') {

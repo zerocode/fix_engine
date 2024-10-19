@@ -1,7 +1,7 @@
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, mpsc::{channel, Sender, Receiver}};
-use crate::fix_engine::FixEngine;
-use crate::fix_message::{FixMessage, RealClock, Clock};
+use crate::engine::FixEngine;
+use crate::message::{FixMessage, RealClock, Clock};
 use tracing::{error, info};
 
 pub struct FixEngineFactory;
