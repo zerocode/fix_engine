@@ -23,7 +23,7 @@ impl FixEngineFactory {
         let (incoming_sender, incoming_receiver) = channel(); // Receive Fix Messages
 
         let clock: Arc<dyn Clock> = Arc::new(RealClock);
-        let mut engine = FixEngine::new(clock, &FixEngineMode::Initiator);
+        let mut engine = FixEngine::new(clock, FixEngineMode::Initiator);
         engine.start(stream, outgoing_receiver, incoming_sender);
         (engine, outgoing_sender, incoming_receiver)
     }
@@ -45,7 +45,7 @@ impl FixEngineFactory {
         let stream = listener.accept().unwrap().0;
 
         let clock: Arc<dyn Clock> = Arc::new(RealClock);
-        let mut engine = FixEngine::new(clock, &FixEngineMode::Acceptor);
+        let mut engine = FixEngine::new(clock, FixEngineMode::Acceptor);
         engine.start(stream, outgoing_receiver, incoming_sender);
         (engine, outgoing_sender, incoming_receiver)
     }
