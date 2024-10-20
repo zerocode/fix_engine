@@ -10,7 +10,6 @@ pub struct FixEngineFactory;
 impl FixEngineFactory {
     pub fn create_initiator(address: &str) -> (FixEngine, Sender<FixMessage>, Receiver<FixMessage>) {
         info!("Creating Initiator.");
-        // Connect to the acceptor
         let stream = match TcpStream::connect(address) {
             Ok(s) => s,
             Err(e) => {
@@ -20,13 +19,13 @@ impl FixEngineFactory {
         };
         info!("Initiator connected to acceptor at {}", address);
 
-        let (tx, rx) = channel();
-        let (incoming_tx, incoming_rx) = channel();
+        let (outgoing_sender, outgoing_receiver) = channel(); // Send Fix Messages
+        let (incoming_sender, incoming_receiver) = channel(); // Receive Fix Messages
 
-        let clock: Arc<dyn Clock> = Arc::new(RealClock); // Provide the clock
-        let mut engine = FixEngine::new(clock, &FixEngineMode::Initiator); // Pass the clock into FixEngine
-        engine.start(stream, rx, incoming_tx);
-        (engine, tx, incoming_rx)
+        let clock: Arc<dyn Clock> = Arc::new(RealClock);
+        let mut engine = FixEngine::new(clock, &FixEngineMode::Initiator);
+        engine.start(stream, outgoing_receiver, incoming_sender);
+        (engine, outgoing_sender, incoming_receiver)
     }
 
     pub fn create_acceptor(address: &str) -> (FixEngine, Sender<FixMessage>, Receiver<FixMessage>) {
@@ -40,14 +39,14 @@ impl FixEngineFactory {
         };
         info!("Acceptor listening on {}", address);
 
-        let (tx, rx) = channel();
-        let (incoming_tx, incoming_rx) = channel();
+        let (outgoing_sender, outgoing_receiver) = channel(); // Send Fix Messages
+        let (incoming_sender, incoming_receiver) = channel(); // Receive Fix Messages
 
         let stream = listener.accept().unwrap().0;
 
-        let clock: Arc<dyn Clock> = Arc::new(RealClock); // Provide the clock
-        let mut engine = FixEngine::new(clock, &FixEngineMode::Acceptor); // Pass the clock into FixEngine
-        engine.start(stream, rx, incoming_tx);
-        (engine, tx, incoming_rx)
+        let clock: Arc<dyn Clock> = Arc::new(RealClock);
+        let mut engine = FixEngine::new(clock, &FixEngineMode::Acceptor);
+        engine.start(stream, outgoing_receiver, incoming_sender);
+        (engine, outgoing_sender, incoming_receiver)
     }
 }

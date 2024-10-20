@@ -34,7 +34,7 @@ impl FixEngine {
         }
     }
 
-    pub fn start(&mut self, mut stream: TcpStream, outgoing_rx: Receiver<FixMessage>, incoming_tx: Sender<FixMessage>) {
+    pub fn start(&mut self, mut stream: TcpStream, outgoing_receiver: Receiver<FixMessage>, incoming_sender: Sender<FixMessage>) {
         let clock = Arc::clone(&self.clock);
         let mode = self.engine_mode;
 
@@ -57,7 +57,7 @@ impl FixEngine {
                             if let Some((message_str, remaining)) = extract_message(&buffer) {
                                 if let Ok(fix_message) = FixMessage::decode(&message_str) {
                                     info!("{0:?}: Received message {fix_message:?}.", mode);
-                                    incoming_tx.send(fix_message).unwrap();
+                                    incoming_sender.send(fix_message).unwrap();
                                 }
                                 buffer = remaining; // Preserve remaining unprocessed data for next loop
                             }
@@ -79,7 +79,7 @@ impl FixEngine {
         self.send_thread = Some(thread::spawn(move || {
             info!("{0:?}: Ready to send messages.", mode);
             while *is_running_send_thread.lock().unwrap() {
-                if let Ok(mut message) = outgoing_rx.recv_timeout(Duration::from_secs(1)) {
+                if let Ok(mut message) = outgoing_receiver.recv_timeout(Duration::from_secs(1)) {
                     info!("{0:?}: Sending message {message:?}.", mode);
                     let message_str = message.encode(&clock);
                     stream.write_all(message_str.as_bytes()).unwrap();
