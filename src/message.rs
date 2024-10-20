@@ -13,17 +13,11 @@ pub struct FixMessage {
 impl Debug for FixMessage {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("FixMessage")
-            .field("header", &sorted_map(&self.header))
+            .field("header", &self.header)
             .field("body", &self.body)
             .field("trailer", &self.trailer)
             .finish() // Exclude the `clock` field
     }
-}
-
-fn sorted_map(map: &HashMap<String, String>) -> Vec<(&String, &String)> {
-    let mut sorted_entries: Vec<_> = map.iter().collect();
-    sorted_entries.sort_by_key(|(k, _)| k.parse::<i32>().unwrap());
-    sorted_entries
 }
 
 impl FixMessage {
