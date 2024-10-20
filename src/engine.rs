@@ -53,7 +53,7 @@ impl FixEngine {
             }
 
             while is_running_receive_thread.load(Ordering::Relaxed) {
-                let mut tmp_buf = [0; 512];
+                let mut tmp_buf = [0; 1024];
                 match stream_reader.read(&mut tmp_buf) {
                     Ok(size) => {
                         if size > 0 {

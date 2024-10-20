@@ -1,15 +1,8 @@
+use crate::clock::Clock;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Formatter, Write};
 use std::sync::Arc;
-use crate::clock::Clock;
-
-// Helper function for calculating the checksum (mod 256 sum of all characters)
-fn calculate_checksum(fix_str: &str) -> String {
-    let sum: u32 = fix_str.as_bytes().iter().map(|&b| b as u32).sum();
-    format!("{:03}", sum % 256)
-}
-
 
 pub struct FixMessage {
     pub header: HashMap<String, String>,
@@ -159,18 +152,23 @@ impl FixMessage {
     }
 }
 
+// Helper function for calculating the checksum (mod 256 sum of all characters)
+fn calculate_checksum(fix_str: &str) -> String {
+    let sum: u32 = fix_str.as_bytes().iter().map(|&b| b as u32).sum();
+    format!("{:03}", sum % 256)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::clock::Clock;
+    use std::sync::Arc;
 
-    // FixedClock for tests
     struct FixedClock;
 
     impl Clock for FixedClock {
         fn now(&self) -> String {
-            "20231016-12:30:00.123".to_string() // Fixed timestamp for testing
+            "20231016-12:30:00.123".to_string()
         }
     }
 
@@ -181,8 +179,6 @@ mod tests {
     #[test]
     fn test_fix_message_encode_decode() {
         let fixed_clock = create_fixed_clock();
-
-        // Create a FixMessage with header, body, and trailer fields
         let mut msg = FixMessage::new();
         msg.header.insert("8".to_string(), "FIX.4.4".to_string());
         msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
@@ -193,10 +189,8 @@ mod tests {
         msg.body.insert("98".to_string(), "0".to_string());         // EncryptMethod
         msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
 
-        // Encode the message
         let encoded_message = msg.encode(&fixed_clock);
 
-        // Decode the message and verify its fields
         let decoded_message = FixMessage::decode(&encoded_message).unwrap();
 
         // Verify header fields
@@ -217,8 +211,6 @@ mod tests {
     #[test]
     fn test_fix_message_encode_with_correct_body_length() {
         let fixed_clock = create_fixed_clock();
-
-        // Create a FixMessage with header and body fields
         let mut msg = FixMessage::new();
         msg.header.insert("8".to_string(), "FIX.4.4".to_string());
         msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
@@ -229,24 +221,20 @@ mod tests {
         msg.body.insert("98".to_string(), "0".to_string());         // EncryptMethod
         msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
 
-        // Encode the message
+
         let encoded_message = msg.encode(&fixed_clock);
 
-        // Ensure the message contains Tag 9 (BodyLength) right after Tag 8 (BeginString)
         let begin_string_position = encoded_message.find("8=FIX.4.4").unwrap();
         let body_length_position = encoded_message.find("9=").unwrap();
         assert!(body_length_position > begin_string_position, "BodyLength should come after BeginString");
 
-        // Extract the BodyLength (Tag 9)
         let body_length_field = encoded_message
             .split('\x01')
             .find(|&field| field.starts_with("9="))
             .expect("BodyLength (Tag 9) not found");
 
-        // Extract the actual body length value from the field (e.g., "9=xxx")
         let actual_body_length = body_length_field.split('=').nth(1).unwrap().parse::<usize>().unwrap();
 
-        // Calculate the expected body length manually (based on the message structure)
         let expected_body_length = encoded_message
             .split("\x01")
             .filter(|field| !field.starts_with("8=") && !field.starts_with("9=") && !field.starts_with("10=") && !field.is_empty())
@@ -268,8 +256,6 @@ mod tests {
     #[test]
     fn test_fix_message_encode_correct_order() {
         let fixed_clock = create_fixed_clock();
-
-        // Create a FixMessage with header and body fields
         let mut msg = FixMessage::new();
         msg.header.insert("8".to_string(), "FIX.4.4".to_string());
         msg.header.insert("35".to_string(), "A".to_string());       // MsgType (Logon)
@@ -280,7 +266,6 @@ mod tests {
         msg.body.insert("98".to_string(), "0".to_string());         // EncryptMethod
         msg.body.insert("108".to_string(), "30".to_string());       // HeartBtInt
 
-        // Encode the message
         let encoded_message = msg.encode(&fixed_clock);
 
         // Output the full encoded message for verification
@@ -297,38 +282,20 @@ mod tests {
         assert!(encoded_message.contains("10=")); // Checksum field
     }
 
-
     #[test]
-    fn test_valid_checksum() {
-        // let fixed_clock = create_fixed_clock();
-
-        let encoded_message = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x01";
-        let calculated = calculate_checksum(encoded_message);
-        print!("{}", calculated)
-    }
-
-    #[test]
-    fn test_calculate_checksum() {
-        // Create a sample FIX message without the checksum field
+    fn test_checksum_is_calculated_correctly() {
         let message_without_checksum = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x01";
 
-        // Calculate the checksum for the message
         let calculated_checksum = calculate_checksum(message_without_checksum);
-
-        // The expected checksum (based on manual calculation or verified checksum)
         let expected_checksum = "119";  // This is the checksum for the above message
 
-        // Verify that the calculated checksum matches the expected checksum
         assert_eq!(calculated_checksum, expected_checksum);
     }
 
-        #[test]
-    fn test_invalid_checksum() {
-
-        // Create an invalid FIX message with an incorrect checksum
+    #[test]
+    fn test_invalid_checksum_throws_err() {
         let invalid_message = "8=FIX.4.4\x019=59\x0135=A\x0149=SENDER\x0156=TARGET\x0134=1\x0152=20231016-12:30:00.123\x0198=0\x01108=30\x0110=999\x01"; // Invalid checksum
 
-        // Decode the message and expect an error due to checksum mismatch
         let result = FixMessage::decode(invalid_message);
         assert!(result.is_err());
         assert_eq!(result.err().unwrap(), "Invalid checksum");
